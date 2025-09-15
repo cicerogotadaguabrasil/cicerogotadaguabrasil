@@ -1,0 +1,224 @@
+<!DOCTYPE html><html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tabela Interativa — BASE CÍCERO AGOSTO</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    h2 { margin-top: 40px; }
+    table { border-collapse: collapse; width: 100%; margin-top: 10px; }
+    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+    th { background: #f4f4f4; cursor: pointer; position: sticky; top: 0; z-index: 2; }
+    tr:nth-child(even) { background: #f9f9f9; }
+    tr.highlight { background: #ffeeba !important; }
+    .controls { margin: 10px 0; display: flex; flex-wrap: wrap; gap: 10px; }
+    input, select, button { padding: 6px; }
+    canvas { max-width: 100%; margin-top: 20px; }
+    @media(max-width:600px) { th, td { font-size: 12px; } }
+    .status-Aberto { background: #f8d7da; }
+    .status-Em.andamento { background: #fff3cd; }
+    .status-Concluído { background: #d4edda; }
+  </style>
+</head>
+<body>
+  <h1>Tabela Interativa — BASE CÍCERO AGOSTO</h1>  <div class="controls">
+    <input type="text" id="searchInput" placeholder="Pesquisar...">
+    <select id="responsavelFilter">
+      <option value="">Todos os responsáveis</option>
+    </select>
+    <input type="file" id="fileInput" accept=".json,.csv">
+    <button onclick="exportCSV()">Exportar CSV</button>
+    <button onclick="exportPDF()">Exportar PDF</button>
+    <button onclick="window.print()">Imprimir</button>
+  </div>  <div style="overflow-x:auto;">
+    <table id="dataTable">
+      <thead></thead>
+      <tbody></tbody>
+    </table>
+  </div>  <h2>Top 5 Valores</h2>
+  <canvas id="barChart"></canvas>
+  <button onclick="downloadChart()">Salvar gráfico como PNG</button>  <h2>Tabela Dinâmica de Tarefas</h2>
+  <div style="overflow-x:auto;">
+    <table id="pivotTable">
+      <thead>
+        <tr><th>Status</th><th>Prioridade</th><th>Responsável</th><th>Prazo</th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>  <script>
+    let tableData = [];
+    let numericColumns = [];
+
+    document.getElementById('fileInput').addEventListener('change', handleFile);
+    document.getElementById('searchInput').addEventListener('input', renderTable);
+    document.getElementById('responsavelFilter').addEventListener('change', renderPivot);
+
+    function handleFile(evt) {
+      const file = evt.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        const text = e.target.result;
+        if (file.name.endsWith('.json')) {
+          tableData = JSON.parse(text);
+        } else if (file.name.endsWith('.csv')) {
+          tableData = parseCSV(text);
+        }
+        detectNumericColumns();
+        renderTable();
+        renderChart();
+        renderPivot();
+        populateResponsavelFilter();
+      };
+      reader.readAsText(file, 'UTF-8');
+    }
+
+    function parseCSV(text) {
+      const [headerLine, ...lines] = text.split(/\r?\n/).filter(l => l.trim());
+      const headers = headerLine.split(',');
+      return lines.map(line => {
+        const values = line.split(',');
+        let obj = {};
+        headers.forEach((h,i) => obj[h] = values[i]);
+        return obj;
+      });
+    }
+
+    function detectNumericColumns() {
+      numericColumns = [];
+      if (!tableData.length) return;
+      for (let key in tableData[0]) {
+        if (tableData.every(r => !isNaN(parseFloat(r[key])))) {
+          numericColumns.push(key);
+        }
+      }
+    }
+
+    function renderTable() {
+      const table = document.getElementById('dataTable');
+      const thead = table.querySelector('thead');
+      const tbody = table.querySelector('tbody');
+      thead.innerHTML = '';
+      tbody.innerHTML = '';
+      if (!tableData.length) return;
+
+      const keys = Object.keys(tableData[0]);
+      const tr = document.createElement('tr');
+      keys.forEach(k => {
+        const th = document.createElement('th');
+        th.textContent = k;
+        th.onclick = () => sortTable(k);
+        tr.appendChild(th);
+      });
+      thead.appendChild(tr);
+
+      const searchVal = document.getElementById('searchInput').value.toLowerCase();
+      let data = tableData.filter(r => Object.values(r).some(v => (v+" ").toLowerCase().includes(searchVal)));
+
+      data.forEach(r => {
+        const tr = document.createElement('tr');
+        keys.forEach(k => {
+          const td = document.createElement('td');
+          td.textContent = r[k];
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+
+      highlightMaxValues();
+    }
+
+    function highlightMaxValues() {
+      numericColumns.forEach(col => {
+        let max = Math.max(...tableData.map(r => parseFloat(r[col])||0));
+        Array.from(document.querySelectorAll('#dataTable tbody tr')).forEach(tr => {
+          const td = tr.cells[Object.keys(tableData[0]).indexOf(col)];
+          if (parseFloat(td.textContent) === max) tr.classList.add('highlight');
+        });
+      });
+    }
+
+    function sortTable(key) {
+      tableData.sort((a,b) => (a[key] > b[key] ? 1 : -1));
+      renderTable();
+    }
+
+    function exportCSV() {
+      if (!tableData.length) return;
+      const keys = Object.keys(tableData[0]);
+      const rows = tableData.map(r => keys.map(k => r[k]));
+      const csv = [keys.join(','), ...rows.map(r => r.join(','))].join('\n');
+      const blob = new Blob([csv], {type:'text/csv'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'dados.csv';
+      a.click();
+    }
+
+    async function exportPDF() {
+      if (!tableData.length) return;
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF('l','pt','a4');
+      let y = 40;
+      doc.setFontSize(14);
+      doc.text('Tabela Interativa — BASE CÍCERO AGOSTO', 40, y);
+      y += 20;
+      const keys = Object.keys(tableData[0]);
+      let rows = tableData.map(r => keys.map(k => r[k]));
+      let tableText = [keys.join(' | '), ...rows.map(r => r.join(' | '))].join('\n');
+      doc.setFontSize(10);
+      doc.text(tableText, 40, y, {maxWidth: 750});
+      doc.save('tabela.pdf');
+    }
+
+    function renderChart() {
+      if (!numericColumns.length) return;
+      const col = numericColumns[0];
+      let sorted = [...tableData].sort((a,b)=> parseFloat(b[col]) - parseFloat(a[col]));
+      let top5 = sorted.slice(0,5);
+      const ctx = document.getElementById('barChart').getContext('2d');
+      if (window.barChart) window.barChart.destroy();
+      window.barChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: top5.map(r => r[Object.keys(r)[0]]),
+          datasets: [{
+            label: col,
+            data: top5.map(r => parseFloat(r[col])),
+            backgroundColor: 'rgba(54,162,235,0.6)'
+          }]
+        },
+        options: { responsive: true }
+      });
+    }
+
+    function downloadChart() {
+      const link = document.createElement('a');
+      link.href = window.barChart.toBase64Image();
+      link.download = 'grafico.png';
+      link.click();
+    }
+
+    function renderPivot() {
+      const tbody = document.querySelector('#pivotTable tbody');
+      tbody.innerHTML = '';
+      if (!tableData.length) return;
+      const filterVal = document.getElementById('responsavelFilter').value;
+      tableData.filter(r => !filterVal || r['Responsável'] === filterVal)
+        .forEach(r => {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `<td class="status-${r['Status']||''}">${r['Status']||''}</td>
+                          <td>${r['Prioridade']||''}</td>
+                          <td>${r['Responsável']||''}</td>
+                          <td>${r['Prazo']||''}</td>`;
+          tbody.appendChild(tr);
+        });
+    }
+
+    function populateResponsavelFilter() {
+      const select = document.getElementById('responsavelFilter');
+      const responsaveis = [...new Set(tableData.map(r => r['Responsável']).filter(Boolean))];
+      select.innerHTML = '<option value="">Todos os responsáveis</option>' + responsaveis.map(r => <option>${r}</option>).join('');
+    }
+  </script></body>
+</html>
